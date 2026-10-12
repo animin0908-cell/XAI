@@ -10,7 +10,8 @@ from torch.utils.data import random_split, Subset
 from torch_geometric.loader import DataLoader
 from dataset import (
     SynGraphDataset,
-    PowerGrid
+    PowerGrid,
+    IEEE9500N1,
     )
 from torch import default_generator
 from utils.parser_utils import arg_parse, get_graph_size_args
@@ -25,6 +26,17 @@ def get_dataset(dataset_root, **kwargs):
 
     if dataset_name.lower() in list(PowerGrid.names.keys()):
         return PowerGrid(root=dataset_root, name=dataset_name, task=task)
+
+    elif dataset_name.lower() == "ieee9500":
+        dataset_root = os.path.abspath(dataset_root)
+        if os.path.basename(dataset_root).lower() != "ieee9500":
+            dataset_root = os.path.join(dataset_root, "ieee9500")
+        return IEEE9500N1(
+            root=dataset_root,
+            master_file=kwargs.get("dss_master_file"),
+            max_scenarios=kwargs.get("max_scenarios", 128),
+            seed=kwargs.get("seed", 0),
+        )
     
     elif dataset_name.lower() in list(SynGraphDataset.names.keys()):
         dataset = SynGraphDataset(root=dataset_root, name=dataset_name, **kwargs)

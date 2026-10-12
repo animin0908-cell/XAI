@@ -44,3 +44,8 @@ ieee39:
 
 ieee118:
   <<: *powergraph
+
+ieee9500:
+  <<: *powergraph
+  task: regression
+  max_scenarios: 128

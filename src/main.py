@@ -20,7 +20,6 @@ import torch_scatter
 def main(args, args_group):
     fix_random_seed(args.seed)
 
-
     # Check Torch version
     print(f"Torch version: {torch.__version__}")
 

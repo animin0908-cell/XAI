@@ -59,7 +59,7 @@ class TrainModel(object):
         if self.task.endswith("classification"):
             return F.nll_loss(logits, labels)
         elif self.task == "regression":
-            return F.mse_loss(logits, labels)
+            return F.mse_loss(logits.reshape_as(labels), labels)
 
     # Get the loss, apply optimizer, backprop and return the loss
 
@@ -88,7 +88,7 @@ class TrainModel(object):
         elif self.task == "regression":
             loss = self.__loss__(logits, labels)
             loss = loss.item()
-            preds = logits
+            preds = logits.reshape_as(labels)
         else:
             mask = kwargs.get("mask")
             if mask is None:
@@ -122,14 +122,17 @@ class TrainModel(object):
             )
             return eval_loss, eval_acc, eval_balanced_acc, eval_f1_score
         elif self.task == "regression":
-            losses, r2scores = [], []
+            losses, labels, predictions = [], [], []
             for batch in self.loader["eval"]:
                 batch = batch.to(self.device)
                 loss, batch_preds = self._eval_batch(batch, batch.y)
-                r2scores.append(r2_score(batch.y.cpu(), batch_preds.cpu()))
                 losses.append(loss)
+                labels.append(batch.y.detach().cpu())
+                predictions.append(batch_preds.detach().cpu())
             eval_loss = torch.tensor(losses).mean().item()
-            eval_r2score = np.mean(r2scores)
+            labels = torch.cat(labels)
+            predictions = torch.cat(predictions)
+            eval_r2score = r2_score(labels, predictions) if labels.numel() > 1 else float("nan")
             print(
                 f"eval loss: {eval_loss:.6f}, eval r2score {eval_r2score:.6f}"
             )
@@ -177,16 +180,17 @@ class TrainModel(object):
             self.save_scores(scores)
             return test_loss, test_acc, test_balanced_acc, test_f1_score, preds
         elif self.task == "regression":
-            losses, r2scores, preds = [], [], []
+            losses, labels, predictions = [], [], []
             for batch in self.loader["test"]:
                 batch = batch.to(self.device)
                 loss, batch_preds = self._eval_batch(batch, batch.y)
-                preds.append(batch_preds)
-                r2scores.append(r2_score(batch.y.detach().cpu(), batch_preds.detach().cpu()))
                 losses.append(loss)
+                labels.append(batch.y.detach().cpu())
+                predictions.append(batch_preds.detach().cpu())
             test_loss = torch.tensor(losses).mean().item()
-            test_r2score = np.mean(r2scores)
-            preds = torch.cat(preds, dim=-1)
+            labels = torch.cat(labels)
+            preds = torch.cat(predictions)
+            test_r2score = r2_score(labels, preds) if labels.numel() > 1 else float("nan")
             print(
                 f"test loss: {test_loss:.6f}, test r2score {test_r2score:.6f}"
             )
@@ -366,7 +370,7 @@ class TrainModel(object):
 #  Main train function
 def train_gnn(args, args_group):
     fix_random_seed(args.seed)
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     dataset_params = args_group["dataset_params"]
     model_params = args_group["model_params"]
@@ -377,9 +381,13 @@ def train_gnn(args, args_group):
         **dataset_params,
     )
     dataset.data.x = dataset.data.x.float()
-    dataset.data.y = dataset.data.y.squeeze().long()
+    if args.task == "regression":
+        dataset.data.y = dataset.data.y.squeeze().float()
+    else:
+        dataset.data.y = dataset.data.y.squeeze().long()
     # get dataset args
     args = get_data_args(dataset, args)
+    model_params["edge_dim"] = args.edge_dim
 
     if args.task.endswith("classification") | (args.task == "regression"):
         dataloader_params = {
@@ -399,7 +407,7 @@ def train_gnn(args, args_group):
         task=args.task,
         task_target = args.task_target,
         save_dir=os.path.join(args.model_save_dir, args.dataset_name, args.task_target),
-        save_name=f"{args.model_name}_{args.datatype}_{args.num_layers}l_{args.hidden_dim}h",
+        save_name=f"{args.model_name}_{args.task}_{args.num_layers}l_{args.hidden_dim}h",
         dataloader_params=dataloader_params,
     ) 
 
@@ -421,12 +429,14 @@ if __name__ == "__main__":
     parser, args = arg_parse()
     args = get_graph_size_args(args)
 
-    # for loop the training architecture for the number of layers and hidden dimensions
-    for j in [8, 16, 32]:   # hidden dimension
-        for i in [1, 2, 3]:  # number of layers
-            args.num_layers = i
-            args.hidden_dim = j
-
-            args_group = create_args_group(parser, args)
-            print(f"Hidden_dim: {args.hidden_dim}, Num_layers: {args.num_layers}")
-            train_gnn(args, args_group)
+    if eval(args.model_sweep):
+        for hidden_dim in [8, 16, 32]:
+            for num_layers in [1, 2, 3]:
+                args.num_layers = num_layers
+                args.hidden_dim = hidden_dim
+                args_group = create_args_group(parser, args)
+                print(f"Hidden_dim: {args.hidden_dim}, Num_layers: {args.num_layers}")
+                train_gnn(args, args_group)
+    else:
+        args_group = create_args_group(parser, args)
+        train_gnn(args, args_group)

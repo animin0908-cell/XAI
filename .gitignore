@@ -139,5 +139,7 @@ error/
 clutils/
 config_euler/
 figures/
+data/
+outputs/
 
 *.sh

@@ -5,6 +5,7 @@ mat73
 matplotlib
 networkx
 numpy
+opendssdirect.py>=0.9,<1.0
 ogb
 panda
 pgmpy

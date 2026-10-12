@@ -156,6 +156,13 @@ def arg_parse():
     parser_dataset_params.add_argument("--test_ratio", dest="test_ratio", type=float)
     parser_dataset_params.add_argument("--val_ratio", dest="val_ratio", type=float)
     parser_dataset_params.add_argument("--random_split_flag", type=str, default="True")
+    parser_dataset_params.add_argument("--dss_master_file", type=str, default=None)
+    parser_dataset_params.add_argument(
+        "--max_scenarios",
+        type=int,
+        default=128,
+        help="Maximum number of IEEE 9500 line-outage scenarios; 0 uses all eligible lines.",
+    )
 
     # optimization parameters
     parser_optimizer_params = parser.add_argument_group("optimizer_params")
@@ -194,6 +201,12 @@ def arg_parse():
         "--num_layers",
         type=int,
         help="Number of layers before pooling",
+    )
+    parser.add_argument(
+        "--model_sweep",
+        type=str,
+        default="True",
+        help="Run the built-in hidden-dimension/layer sweep; set False to use the supplied values.",
     )
     parser_model_params.add_argument("--dropout", type=float, help="Dropout rate.")
     parser_model_params.add_argument(
