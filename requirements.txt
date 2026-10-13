@@ -11,6 +11,7 @@ panda
 pgmpy
 scikit_learn
 scipy
+shap>=0.46,<1
 torch
 torch_geometric
 torch_scatter

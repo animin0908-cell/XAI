@@ -42,10 +42,31 @@
 
 “受影响比例”按模型内的负荷计算，包含越限等问题，不等于停电面积或停电用户比例。影响阈值的概率来自仿真统计。
 
-## 4. 现在有什么问题，以及后续 SHAP
+## 4. 现在有什么问题，以及 SHAP
 
 - **缺少正常样本：** 两个县的基准状态已经达到默认问题判据，119 个有效场景全部标为“有问题”。因此当前 GNN 概率无法可靠校准，输出的是未校准分数。
 - **缺少现实数据：** 没有真实故障记录、实际线路故障率和不同时段的运行数据，目前不能直接给出真实的未来停电概率。
 - **部分场景未确定：** 9 个场景未收敛，不能当作安全；报告给出这部分不确定性造成的概率上下界。
 
-**后续 SHAP：** 可针对某个县的风险或影响比例输出，解释哪些输入因素推动了结果。SHAP 尚未接入；若要据此调整负荷或开关来控制输出，需要另加决策逻辑和仿真验证。SHAP 本身不能补齐数据或修正未校准概率。
+**SHAP 已接入：** 根目录 `main.py` 可选择 IEEE9500 的县级风险或影响比例，使用统一的 Kernel SHAP 输出特征贡献和包含 feature 名称的中文句子。按节点/边整列特征分组，固定图拓扑，以训练集列均值作为遮蔽参考、端点标记以 0 为参考。合成参考图可能不对应实际运行状态；这是特征组解释，不是逐母线或逐线路解释。若要据此调整负荷或开关来控制输出，需要另加决策逻辑和仿真验证。SHAP 本身不能补齐数据或修正未校准概率。
+
+## 5. 两套模型分离与统一运行
+
+- **IEEE24：** [独立流程](src/workflows/ieee24.py) 加载 PowerGraph 数据和原始整图 GNN，支持分类或 DNS 回归，使用自己的缓存和权重。
+- **IEEE9500：** [独立流程](src/workflows/ieee9500.py) 加载原有县级 GNN 及匹配的场景缓存，恢复保存的归一化、校准和测试划分。现有 GNN 结构和已训练权重保持不变。
+- **共用 SHAP：** [特征解释器](src/explainer/feature_shap.py) 为两套模型导出相同格式的贡献表、JSON 和中文句子；解释目标及单位由各自模型提供。
+
+```bash
+.venv/bin/python main.py --dataset ieee9500 --model gin --target both
+.venv/bin/python main.py --dataset ieee24 --model transformer
+```
+
+默认输出目录为 `outputs/<dataset>/<model>_<task>_shap/`，含 `predictions.csv`、`shap_features.csv`、`shap_report.json` 和 `explanations.txt`。IEEE24 当前仍需提供真实 PowerGraph 数据才能进行真实预测；IEEE9500 可直接使用已有权重和缓存。
+
+## 6. 面向不同角色的句子
+
+`explanations.txt` 现在按场景和县生成 **For Admin:** 与 **For Asset Manager:** 段落，合并该县的风险、影响比例和主要 SHAP feature。Admin 侧重预测摘要和主要影响因素；Asset Manager 侧重受影响负荷、相关特征和工程复核说明。
+
+通过 `--audiences admin asset_manager engineer executive domain_expert` 可增加 Engineer、Executive、Domain Expert。句子由模板和实际数值生成；概率/比例贡献用百分点表达，未校准风险仍按分数呈现。现有数据未提供天气、设备年龄、历史故障或经济参数，所以不生成对应原因、成本或 ROI，也不把整列特征归因当作关键子图。
+
+角色句子和对应的原始预测/贡献证据另存为 `stakeholder_explanations.json`，也包含在 `shap_report.json` 中。原先逐特征的详细句子保存在 `feature_explanations.txt`，便于审查。

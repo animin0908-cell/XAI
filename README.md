@@ -85,6 +85,98 @@ Remove the for loop in train_gnn.py if running for a specific **--hidden_dim** a
 
 The models will be saved in **model** directory
 
+### 选择 Dataset、对应模型和统一 SHAP 输出
+
+根目录 `main.py` 是统一入口。两套模型的数据加载、权重和预测流程分别位于
+`src/workflows/ieee24.py` 和 `src/workflows/ieee9500.py`；现有模型结构保持不变。
+
+| Dataset | 模型结构 | 预测和解释目标 |
+| --- | --- | --- |
+| `ieee24` | 原始 `src/gnn/model.py`：整图 GNN | 二分类、A/B/C/D 四分类或 DNS（MW） |
+| `ieee9500` | `src/gnn/regional_risk.py`：GNN + 县级聚合 + 双输出 | 每个县的问题风险、受影响负荷比例 |
+
+两套流程都支持 `gin`（GINE）、`gat`、`transformer`，共用
+[Kernel SHAP](https://shap.readthedocs.io/en/latest/generated/shap.KernelExplainer.html)
+特征解释器 `src/explainer/feature_shap.py`。先安装 `requirements.txt`。
+
+```bash
+# 现有 IEEE9500 GINE 权重：解释测试集第一个场景的各县风险和影响比例。
+.venv/bin/python main.py --dataset ieee9500 --model gin --target both
+
+# 只解释 Adams County 的影响比例。
+.venv/bin/python main.py --dataset ieee9500 --model gin \
+  --county "Adams County" --target extent
+
+# IEEE24 原始 Transformer，多分类；默认解释预测类别。
+.venv/bin/python main.py --dataset ieee24 --model transformer
+
+# IEEE24 DNS 回归；也可用 --task binary_classification。
+.venv/bin/python main.py --dataset ieee24 --model gin --task regression
+
+# 列出两套模型选项。
+.venv/bin/python main.py --list_models
+```
+
+IEEE24 需要七个 PowerGraph MAT 文件放在 `data/ieee24/raw/`。默认使用
+Transformer、3 层、16 隐藏维度和多分类；读取已有 best 权重，没有权重时训练
+50 epochs 并使用验证损失最低的模型。`--predict_only` 禁止自动训练，
+`--checkpoint` 指定权重时须同时传入匹配的结构和任务参数。
+不同任务使用独立的数据缓存；旧权重没有保存划分时，测试需使用训练时的随机种子和比例。
+
+IEEE9500 默认加载 `outputs/ieee9500_county_risk/regional_gnn_best.pt`，
+自动恢复其结构、归一化、县名、校准参数和测试划分，并读取相同目录下与该权重匹配的
+`dataset/<cache_key>/graphs.pt`。不会重新仿真或训练。选择其他架构时，需要先训练
+对应的模型，并通过 `--checkpoint` 指向其权重，例如：
+
+```bash
+.venv/bin/python src/train_region_risk.py --model-name transformer \
+  --hidden-dim 16 --output-dir ./outputs/ieee9500_transformer
+.venv/bin/python main.py --dataset ieee9500 --model transformer \
+  --checkpoint ./outputs/ieee9500_transformer/regional_gnn_best.pt
+```
+
+两套流程输出相同格式，默认目录为 `outputs/<dataset>/<model>_<task>_shap/`：
+
+| 文件 | 内容 |
+| --- | --- |
+| `predictions.csv` | 每个样本、每个输出的预测、真实标签或比例、单位、所属数据划分和校准状态 |
+| `shap_features.csv` | 特征名、节点/边类型、特征均值、参考值、SHAP 贡献、排名及中文句子 |
+| `shap_report.json` | 同一份结构化结果、基准输出、可加性误差、参考训练样本和解释范围 |
+| `explanations.txt` | 面向角色的中文段落，默认 `For Admin:` 和 `For Asset Manager:` |
+| `stakeholder_explanations.json` | 按场景/县/角色组织的句子及原始预测、SHAP 证据，便于后续页面展示 |
+| `feature_explanations.txt` | 保留逐特征的详细贡献句子 |
+
+`--output_dir` 可指定输出目录，`--explain_count` 默认解释一个预测样本，
+`--sample_index` 可选择指定缓存图（报告会标记它属于训练还是测试集）。
+默认只预测测试集；`--predict_split all` 包含训练样本。
+IEEE24 可用 `--target_class 0` 固定解释 A 类；IEEE9500 用 `--county` 和
+`--target risk|extent|both` 选择输出。`--skip_shap` 仅导出预测。
+
+**面向角色的呈现：** `explanations.txt` 将同一县、同一场景的风险和影响比例合并，
+再分别生成 Admin 的预测与主要因素摘要，以及 Asset Manager 的影响与工程复核说明。
+每段包含实际 feature 名称、SHAP 贡献方向和数值；概率/负荷比例的贡献以百分点表达，
+未校准风险保持为分数，不标成真实停电概率。角色句子通过固定模板生成，并保留数值证据。
+当前数据没有天气、设备年龄、历史故障或成本/ROI 参数，因此不据此生成金额、收益或关键子图。
+
+```bash
+# 默认生成 For Admin 和 For Asset Manager。
+.venv/bin/python main.py --dataset ieee9500 --model gin --target both
+
+# 也可输出图片示例中的其他角色。
+.venv/bin/python main.py --dataset ieee9500 --model gin --target both \
+  --audiences admin asset_manager engineer executive domain_expert
+```
+
+**解释定义：** IEEE24 的 3 列节点特征 + 4 列边特征、IEEE9500 的 4 + 4 列特征，
+各自按整列作为 SHAP 特征组。每个样本的拓扑和县归属固定，被遮蔽的列用训练集均值
+替换，停运端点标记用 0 替换；这会产生合成参考图，不保证是可行的电网运行状态。
+默认 `--shap_nsamples 256`，覆盖当前 7/8 个特征组的全部组合，
+`--shap_batch_size` 控制大图解释时的推理批量。
+贡献值满足“参考输出 + 特征贡献之和 = 当前输出”，代码检查该关系。
+它们是整列输入特征对当前模型输出的贡献，不是逐母线或逐线路归因。
+两套模型的输出含义和单位不同，不能仅凭相同 SHAP 格式直接比较贡献数值。
+未校准的 IEEE9500 风险继续标记为分数，IEEE24 分类概率也是未校准模型输出。
+
 ### IEEE 9500 N-1 DNS regression
 
 The OpenDSS IEEE 9500 files describe a feeder, not a labeled training set. XAI can generate graph-level training samples by disabling one enabled non-switch line at a time, solving the feeder with OpenDSS, and using the resulting demand not served (DNS, MW) as the regression target. Install the requirements first; the selected Python environment must include PyTorch, PyTorch Geometric, and OpenDSSDirect.py.

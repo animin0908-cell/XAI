@@ -1,0 +1,93 @@
+本示例使用 IEEE9500 电网模型，经 OpenDSS 单线路停运仿真生成的数据集。
+示例均选自测试集，覆盖 Franklin County 和 Adams County 的所建模电网。
+
+DNN 模型主体为 PowerGraph-XAI 项目中的图神经网络（GNN）。
+本次复用其 GINE 消息传递层，使用 3 层、16 隐藏维度。
+模型来源：
+https://github.com/PowerGraph-Datasets/PowerGraph-XAI
+本地复用的模型代码：src/gnn/model.py
+新增区域模型代码：src/gnn/regional_risk.py
+
+针对原模型的三项重要修改：
+1. 输入适配：节点特征由原来的 3 维扩展为 4 维，使用有功负荷、
+   无功负荷、停运前电压和停运线路端点标记；边特征改为支路类型、
+   相数及额定值特征，以适配 IEEE9500 数据。
+2. 县级聚合：增加县内均值、最大值聚合，并结合全网表示与县内输入，
+   将原来的整图预测扩展为逐县预测。
+3. 双任务预测头：增加问题风险和受影响负荷比例两个输出，
+   用分类与回归损失联合训练；区域模型从头训练，并单独进行概率校准。
+
+原 src/gnn/model.py 的消息传递实现保持不变；
+上述修改位于区域模型及数据适配层，未直接使用原模型预训练权重。
+
+解释模块：
+- SHAP 已接入：使用 Kernel SHAP，按节点/边特征列分组，
+  计算特征对县级风险或影响比例的贡献，再生成面向不同角色的句子。
+  https://shap.readthedocs.io/en/latest/generated/shap.KernelExplainer.html
+- GNNExplainer：原 XAI 框架已包含该模块，可用于解释关键节点特征和子图。
+  当前尚未接入 IEEE9500 县级输出流程；以下示例不包含其结果。
+  https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.explain.algorithm.GNNExplainer.html
+
+Sample Outputs
+
+Scope: Modeled grid only, under hypothetical single-line outages.
+Affected load includes supply loss, voltage violations or overload issues.
+It is not the percentage of customers experiencing an outage.
+SHAP contributions are relative to the training reference graph.
+The following outputs are condensed from the generated results.
+
+Example 1: Franklin County (test sample 40)
+Hypothetical outage: line.ln6260021-1.
+
+For Admin:
+  Uncalibrated risk score: 1.
+  Risk probability: Insufficient data.
+  The model predicts an affected-load fraction of 19.78%.
+  Main explanatory feature: branch rating feature (log_rating).
+  Review the relevant input data.
+
+For Asset Manager:
+  The model predicts an affected-load fraction of 19.78%.
+  Branch rating feature (log_rating) contributes -18.9 percentage points.
+  Pre-outage voltage (voltage) contributes -3.58 percentage points.
+  Outage cost: Insufficient data.
+  Maintenance ROI: Insufficient data.
+
+Example 2: Adams County (test sample 107)
+Hypothetical outage: line.ln5927298-1.
+
+For Admin:
+  Uncalibrated risk score: 0.999899.
+  Risk probability: Insufficient data.
+  The model predicts an affected-load fraction of 50.78%.
+  Main explanatory features: reactive load (load_q) and
+  pre-outage voltage (voltage).
+  Review the relevant input data.
+
+For Asset Manager:
+  The model predicts an affected-load fraction of 50.78%.
+  Pre-outage voltage (voltage) contributes +1.21 percentage points.
+  Branch rating feature (log_rating) contributes -0.52 percentage points.
+  Outage cost: Insufficient data.
+  Maintenance ROI: Insufficient data.
+
+Example 3: Adams County (test sample 25)
+Hypothetical outage: line.ln6379373-1.
+
+For Admin:
+  Uncalibrated risk score: 0.999887.
+  Risk probability: Insufficient data.
+  The model predicts an affected-load fraction of 50.44%.
+  Main explanatory features: reactive load (load_q) and
+  pre-outage voltage (voltage).
+  Review the relevant input data.
+
+For Asset Manager:
+  The model predicts an affected-load fraction of 50.44%.
+  Pre-outage voltage (voltage) contributes +1.21 percentage points.
+  Branch rating feature (log_rating) contributes -0.518 percentage points.
+  Outage cost: Insufficient data.
+  Maintenance ROI: Insufficient data.
+
+Source:
+outputs/ieee9500/gin_county_risk_shap_sample_candidates/explanations.txt
